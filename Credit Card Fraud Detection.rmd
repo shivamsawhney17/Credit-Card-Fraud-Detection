@@ -1,0 +1,379 @@
+---
+title: "Credit Card Fraud Detection"
+author: "Shivam Sawhney"
+output: html_document
+---
+
+First and foremost, lets import all the necessary `libraries` required for the analysis and model creation.
+
+```{r warnings=FALSE, message=FALSE}
+
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(rjson)
+library(jsonlite)
+library(Hmisc)
+library(gridExtra)
+
+```
+
+Now, lets load the dataset.
+
+I found this dataset on a GitHub repository. It is quite extensive, has a lot of data, is messy, and not in a csv format. The dataset in the JSON format, hence I have made use of the `stream_in` function of the jsonlite library.
+
+```{r warnings=FALSE, include=FALSE}
+
+tr_data <- stream_in(file("transactions.txt"))
+
+```
+
+Next, I have stored the loaded dataset into a dataframe and replaced any/all blank values in the dataset with NAs.
+
+```{r warnings=FALSE}
+
+tr_data <- as.data.frame(tr_data)
+tr_data <- replace(tr_data, tr_data=='', NA)
+head(tr_data)
+
+```
+
+Lets look at the number of `NAs` across different columns in the dataset
+
+```{r}
+
+sapply(tr_data, function(x) sum(is.na(x)))
+
+```
+
+Shape of the dataset
+
+```{r}
+
+dim(tr_data)
+
+```
+
+Making use of the `describe()` and `summary()` function in R, to get some descriptive statistical analysis of the dataset
+
+```{r}
+
+temp <- select(tr_data, -c("echoBuffer","merchantCity","merchantState","merchantZip","posOnPremises", "recurringAuthInd"))
+describe(temp)
+
+```
+
+```{r}
+
+summary(tr_data)
+
+```
+
+Making a copy of the dataset for further analysis and EDA
+
+```{r}
+
+tr_data_1 <- tr_data
+
+```
+
+Dropping unnecessary columns
+
+```{r}
+
+tr_data_1 <- select(tr_data_1, -c('echoBuffer','merchantCity', 'merchantZip','merchantState', 'posOnPremises', 'recurringAuthInd'))
+
+```
+
+```{r}
+
+head(tr_data_1)
+
+```
+
+Checking for count of `NAs` again
+
+```{r}
+
+sapply(tr_data_1, function(x) sum(is.na(x)))
+
+```
+
+The given dataset is a mixture of categorical and numerical data. Below are the details of the unique values of some of the `categorical data.`
+
+```{r}
+
+mn <- count(tr_data_1,merchantName, sort=TRUE)
+head(mn,15)
+
+```
+
+```{r}
+
+count(tr_data_1,acqCountry, sort=TRUE)
+
+```
+
+```{r}
+
+count(tr_data_1, transactionType, sort = TRUE)
+
+```
+
+Now that the data has been loaded, read and understood (statistically), I will be looking into some more data understanding with the help of `visualizations.`
+
+Let us first look at the `transactionAmount` attribute and look at its distribution
+
+```{r}
+
+tr_data_1 %>% ggplot(aes(transactionAmount)) + geom_histogram(fill='green', col='blue', binwidth = 75) + xlab("Transaction Amount") + ylab("Frequency") + ggtitle("Histogram of Transaction Amount") + theme_dark() +  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+As can be seen from the graph, that the usual transaction amount value is low - which makes sense, no one spends \$1000 on a daily basis!
+
+Next, lets look at the `creditLimit` variable
+
+```{r}
+
+tr_data_1 %>% ggplot(aes(creditLimit, )) + geom_boxplot(fill='brown', col="Red") + xlab("Credit Limit") + ggtitle("Boxplot of Credit Limit") + theme_linedraw() +  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+Trends show that the Credit Limit of customers usually lies between \$7500 and \$12500, with some exceptions having their limit as \$50000 even!
+
+Next up, is the `availableMoney` attribute
+
+```{r}
+
+tr_data_1 %>% ggplot(aes(availableMoney)) + geom_density(fill='light blue', alpha=0.65) + xlab("Available Money") + ggtitle("Density Plot of Available Money") + theme_light() + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Again, somewhat skewed to the left, with variations going as far as \$50000 as well
+
+```{r}
+
+boxplot(transactionAmount ~ creditLimit, data=tr_data_1, main="Relationship between Credit Limit and Transaction Amount", xlab="Credit Limit", ylab="Transaction Amount", col="light green", border="black")
+
+```
+
+The above graph shows the relationship b/w Credit Limit and Transaction Amount. Seems like even though a customer has a higher credit Limit, still, they usually shop for transaction varying between 0-$500
+
+Next, I tried to look at the country distribution, where-in these transactions were happening.
+
+```{r}
+
+pie_data <- count(tr_data_1,acqCountry, sort=TRUE)
+pie_data_1 <- pie_data %>% filter(acqCountry!="US")
+
+pie_data %>% ggplot(aes("",n, fill=acqCountry)) + geom_bar(stat="identity", width=1, na.rm=TRUE) + coord_polar("y", start=0) + theme_grey() +  theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Pie Chart of Country Distribution")
+
+```
+
+As can be seen from the above graph - USA dominates the market, and there is virtually no/min values of the other countries. To have a more realistic idea of the distribution, let us remove US and then try the plot again.
+
+```{r}
+
+pie_data_1 %>% ggplot(aes("",n, fill=acqCountry)) + geom_bar(stat="identity", width=1, na.rm=TRUE) + coord_polar("y", start=0) + geom_text(aes(label = paste0(round(n))), position = position_stack(vjust = 0.5)) + theme_grey() +  theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Pie Chart of Country Distribution (except US)")
+
+```
+
+Much better!
+
+The last plot highlights the `cardPresent` trends for various kinds of transactions
+
+```{r}
+
+p1 = tr_data_1 %>% filter(transactionType=="PURCHASE") %>% ggplot(aes(cardPresent)) + geom_bar(stat="count", color="yellow", fill="purple") + theme_grey() +  theme(plot.title = element_text(hjust = 0.5)) + ggtitle("PURCHASE transactions")
+
+p3 = tr_data_1 %>% filter(transactionType=="ADDRESS_VERIFICATION") %>% ggplot(aes(cardPresent)) + geom_bar(stat="count", color="red", fill="Blue") + theme_grey() +  theme(plot.title = element_text(hjust = 0.5)) + ggtitle("ADDRESS VERIFICATION transactions")
+
+p2 = tr_data_1 %>% filter(transactionType=="REVERSAL") %>% ggplot(aes(cardPresent)) + geom_bar(stat="count", color="brown", fill="orange") + theme_grey() +  theme(plot.title = element_text(hjust = 0.5)) + ggtitle("REVERSAL transactions")
+
+grid.arrange(p1, p2,p3, nrow(3), top="Card Present Trends")
+
+```
+
+Now, in order to create an effective model, we need to address the fact that model should be able to detect reverse / duplicate transactions and not categorize them as `Fraud`
+
+I have considered the duplicate transactions to fall into one of the below two categories:
+
+-   [Multi Swipe]{.underline} - Here, the same transaction amount for a commodity was transacted twice within a short interval of time
+
+-   [Reversal]{.underline} - Here a purchase is followed up by a Reverse Transaction.
+
+Firstly, finding out the `Multi- swipe` transactions. Here, again I have made a duplicate of the dataset for further manipulations. Next, I have converted the `transactionDateTime` column to the proper data type
+
+```{r}
+
+tr_data_2 <-tr_data_1
+str(tr_data_2)
+
+```
+
+```{r}
+
+tr_data_2$transactionDateTime <- str_replace(tr_data_2$transactionDateTime,"T", " ")
+tr_data_2$transactionDateTime <-as.POSIXct( tr_data_2$transactionDateTime, tz = "UTC", format = "%Y-%m-%d %H:%M:%S" )
+str(tr_data_2)
+
+```
+
+Now, the main logic - firstly, we need to sort the `transactionDateTime` column so as to gain insights of the multi swipe transactions.
+
+Then, I have created a new column on the database `Duplicated`. This column is filled up on the basis that if there are two transactions which are made within **2 mins** of each other and are having the same transaction Amount and the same customer ID, then the column is populated with a "*yes*", otherwise a "*no*".
+
+```{r}
+
+tr_data_3 <- tr_data_2[order(tr_data_2$transactionDateTime, decreasing=FALSE),]
+head(tr_data_3)
+
+```
+
+```{r}
+
+tr_data_4 <-tr_data_3
+dt=as.list(tr_data_4$transactionDateTime)
+cid=as.list(tr_data_4$customerId)
+tra=as.list(tr_data_4$transactionAmount)
+tr_data_4$transactionDateTime <- as.numeric(tr_data_3$transactionDateTime)
+
+```
+
+```{r}
+
+ans=list()
+lim=length(dt)
+for (i in 2:lim)
+  {
+  if(as.numeric(dt[[i]]-dt[[i-1]])<120 & cid[[i]]==cid[[i-1]] & tra[[i]]==tra[[i-1]])
+  {
+    ans[[i]]="Yes"
+  }
+  else
+  {
+    ans[[i]]="No"
+  }
+}
+
+```
+
+```{r}
+
+tr_data_4$Duplicated <- as.character(ans)
+tr_data_3$Duplicated <- tr_data_4$Duplicated
+head(tr_data_3)
+
+```
+
+Finding the sum of the transactions categorized as `Duplicate`
+
+```{r}
+
+new_data <- tr_data_3 %>% filter(Duplicated=="Yes")
+dup=sum(new_data$transactionAmount)
+dup
+
+```
+
+Now, for the second type of duplicate transactions, the dataset has a column labelled `transactionType`, where the "Reversal" transactions are clearly marked. Just need to pull those from the dataset and find their sum
+
+```{r}
+
+new_data_1 <- tr_data_3 %>% filter(transactionType=='REVERSAL') 
+rev=sum(new_data_1$transactionAmount)
+rev
+
+```
+
+Lets look at the percent of duplicate/reversed transactions from the total transactions
+
+```{r}
+
+amo=rev+dup
+amo
+
+```
+
+The percentage of transactions which are duplicated/reversed
+
+```{r}
+
+tot=sum(tr_data_3$transactionAmount)
+(amo/tot)*100
+
+```
+
+Model Creation
+
+For the problem at hand, I decided to go forward with `Logistic Regression` and see how does that model perform.
+
+Firstly, making use of the `corrplot` library, let us see how the variables in the dataset are correlated with one another
+
+```{r}
+
+library(corrplot)
+tr_data_5 <- select(tr_data_3, c('accountNumber', 'customerId', 'creditLimit', 'availableMoney', 'transactionAmount', 'cardCVV', 'enteredCVV', 'cardLast4Digits', 'currentBalance', 'cardPresent', 'expirationDateKeyInMatch', 'isFraud'))
+tr_data_5$accountNumber <- as.numeric(tr_data_5$accountNumber)
+tr_data_5$customerId <- as.numeric(tr_data_5$customerId)
+tr_data_5$cardCVV <- as.numeric(tr_data_5$cardCVV)
+tr_data_5$enteredCVV <- as.numeric(tr_data_5$enteredCVV)
+tr_data_5$cardLast4Digits <- as.numeric(tr_data_5$cardLast4Digits)
+
+matt = cor(tr_data_5)
+corrplot(matt, type = "upper")
+
+```
+
+There does not seem to be much correlation among the variables as can be seen from the above plot. Next, let us define our `x` and `y` variables and then split them into training and test sets
+
+```{r}
+
+x <- select(tr_data_5, -c("isFraud"))
+y <- tr_data_5$isFraud
+
+```
+
+```{r}
+
+set.seed(17)
+train_index <- createDataPartition(y, times = 1, p =0.75, list = FALSE)
+
+```
+
+```{r}
+
+train_set=tr_data_5[train_index,]
+test_set=tr_data_5[-train_index,]
+
+```
+
+Now, onto the model creation
+
+```{r}
+
+model <- glm(isFraud ~.,family=binomial(link='logit'),data=train_set)
+
+p_hat <- predict(model, newdata = test_set, type="response")
+p_hat <- ifelse(p_hat > 0.5,1,0)
+
+```
+
+Lets look at how good our model is performing by making a prediction
+
+```{r}
+
+misClasificError <- mean(p_hat != test_set$isFraud)
+print(paste('Accuracy',(1-misClasificError)*100))
+
+```
+
+The model is performing with an accuracy of `98%`
+
+```{r}
+
+summary(model)
+
+```
